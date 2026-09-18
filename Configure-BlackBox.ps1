@@ -32,7 +32,7 @@ $counters = @(
     '\Process(*)\% Privileged Time'
     '\Process(*)\% Processor Time'
     '\Processor Information(*)\% Processor Time'
-    '\Processor Information(*)\% of Maximum Frequency'
+    '\Processor Information(*)\Processor Frequency'
     '\Memory\Available MBytes'
     '\LogicalDisk(C:)\Current Disk Queue Length'
     '\LogicalDisk(C:)\Avg. Disk sec/Transfer'

@@ -12,6 +12,32 @@ BlackBox records Windows performance counters in the background so you can inves
 
 The startup task is not a continuous watchdog: it does not restart collection if collection stops later in the session. BlackBox collects diagnostic data; it does not send alerts or automatically identify a root cause.
 
+## How continuous recording works
+
+1. **Configure and start:** Install saves the counter configuration in Windows, registers the startup task, and calls `Start($true)` on the collector. The script then verifies that the collector is running and exits.
+2. **Keep sampling:** Windows Performance Logs and Alerts (PLA) manages collection independently of the script. It samples the configured counters every 15 seconds. You can close PowerShell or sign out; the script does not need to stay open and contains no polling loop.
+3. **Continue across segments:** `Segment = $true` enables segmentation and `SegmentMaxSize = 300` sets the size threshold in MB. Reaching that threshold causes PLA to start another log segment so collection can continue. The script sets no time-based recording stop or time-based segment rotation.
+4. **Start again after reboot:** At system startup, `Start BlackBox` runs `logman.exe start "BlackBox"` as SYSTEM. This starts the already saved configuration; it does not reinstall the collector or revalidate the counter list. The task retries failed launches three times, one minute apart.
+5. **Stop when requested:** Remove unregisters the startup task, stops collection, and deletes the collector configuration while retaining logs. Reinstalling briefly interrupts recording while the configuration is replaced.
+
+Continuous recording applies while the computer is awake and the collector is running. Shutdown and sleep leave gaps in the history. The task has an at-startup trigger, not a resume or recurring health-check trigger. If collection stops because of an error, disk-space problems, or a manual stop, this script provides no automatic recovery during that session.
+
+**Segmentation is not circular retention.** `LogOverwrite = $true` permits overwriting an existing matching output file; it does not configure a fixed-size circular buffer or deletion of the oldest segments. The filename pattern is applied when output files are created, not as a timer that schedules file rotation. Do not assume a guaranteed number of hours or days of history from these settings. See the storage details below.
+
+To stop collection temporarily without removing its configuration or startup task:
+
+```powershell
+logman.exe stop BlackBox
+```
+
+To restart that saved collector manually:
+
+```powershell
+logman.exe start BlackBox
+```
+
+A temporary stop does not disable collection at the next boot. Use Remove when you want to remove that startup behavior too.
+
 ## Install or update
 
 Open **Windows PowerShell 5.1** (`powershell.exe`) with **Run as administrator**, then change to the directory containing the script. PowerShell 7 is not supported by this script.
@@ -73,14 +99,14 @@ Expected PLA ignored-property notices for `TaskArguments` and `PerformanceCounte
 
 ## Current counters and how they help
 
-These are the 16 configured paths. The installed set may contain fewer if counters are unavailable. `(*)` collects matching instances so you can compare individual processes, CPUs, adapters, or GPU engines.
+The current configuration retains all 16 paths below, including Virtual Bytes, network, and GPU counters. Processor Frequency records reported clock speed in MHz. The installed set may contain fewer if counters are unavailable. `(*)` collects matching instances so you can compare individual processes, CPUs, adapters, or GPU engines.
 
 | Counter | Diagnostic use |
 | --- | --- |
 | `\Process(*)\% Privileged Time` | Kernel-mode CPU time attributed to each process. Helps distinguish kernel-related work from application computation during high CPU use. |
 | `\Process(*)\% Processor Time` | CPU consumption per process. Identifies busy applications during a slowdown. A process using multiple logical processors can exceed 100%. |
 | `\Processor Information(*)\% Processor Time` | CPU busy time by processor instance. Reveals broad saturation or one busy logical processor hidden by a lower overall average. |
-| `\Processor Information(*)\% of Maximum Frequency` | Reported frequency relative to maximum. Compare with CPU demand when investigating power management or frequency limits; a low value alone does not prove thermal throttling. |
+| `\Processor Information(*)\Processor Frequency` | Reported CPU clock speed in MHz (3,200 MHz = 3.2 GHz). Compare with CPU demand when investigating power management or frequency limits; a low value alone does not prove thermal throttling. Hardware reporting can differ from Task Manager's displayed speed. |
 | `\Memory\Available MBytes` | Physical memory available for use. Sustained low availability suggests memory pressure; compare with process memory trends. |
 | `\LogicalDisk(C:)\Current Disk Queue Length` | Outstanding I/O on `C:` at the sample time. A sustained queue alongside rising latency can indicate storage contention. |
 | `\LogicalDisk(C:)\Avg. Disk sec/Transfer` | Average I/O completion time on `C:` in seconds. Multiply by 1,000 for milliseconds; rising values during an incident point toward storage delays. |
@@ -102,6 +128,8 @@ For more detail, see Microsoft's guidance on [CPU and system performance investi
 2. Open `perfmon.exe` and select **Performance Monitor**. Open the graph properties, select **Source**, choose **Log files**, and add the saved performance log. Set the incident time range.
 3. Add relevant counters from the log. Start with CPU, available memory, and disk latency, then narrow to process or device instances. Adjust graph scales or use report view when comparing different units.
 4. Compare the incident with a normal period on the same machine. Correlate several counters rather than treating a single peak as the root cause.
+
+Review Windows event logs for the same time window alongside the performance logs. Events can identify reported failures, while the counter history helps explain resource activity before and during a slowdown that may not generate an event. No event-log collection or export is performed by this script.
 
 | Symptom | Where to start |
 | --- | --- |
